@@ -1,0 +1,566 @@
+---
+title: "SIO-6003 - Techniques de forage de données"
+subtitle: "<span style='font-size: 35px'>Projet de mi-session</style>" 
+author:
+- Loïc Artino (536 756 361)
+date: "8 mars 2022"
+geometry: margin=2cm
+always_allow_html: true
+output: 
+  pdf_document:
+    latex_engine: xelatex
+mainfont: Times New Roman
+header-includes:
+  \usepackage{fontspec}
+  \usepackage[labelformat = empty]{caption}
+---
+
+```{r librairies, include=FALSE}
+packages<-function(x){
+  x<-as.character(match.call()[[2]])
+  if (!require(x,character.only=TRUE)){
+    install.packages(pkgs=x,repos="http://cran.r-project.org")
+    require(x,character.only=TRUE)
+  }
+}
+packages(kableExtra)
+packages(leaps)
+packages(ggplot2)
+packages(tidyverse)
+packages(rmarkdown)
+packages(viridis)
+packages(corrplot)
+packages(egg)
+packages(psych)
+
+# kableExtra est un outil permettant de gérer l'affichage des tableaux dans le rapport
+# corrplot est un outil permettant de facilement visualiser les matrices de corrélation
+# viridis est un outil de gestion des couleurs dans les visules de type ggplot
+# la fonction ggarrange() d'egg est un outil permettant de combiner plusieurs objets de type ggplot
+# psych est un outil offrant davantage d'outils statistiques
+
+```
+
+# Question 1
+
+Dans le cadre de ce projet, nous avons tout d'abord procédé à l'analyse descriptive du jeu de données.  
+
+```{r read_csv, echo= FALSE, include=FALSE}
+
+# PLACER LE fICHIER DANS LE MÊME DOSSIER QUE LE FICHIER MARKDOWN
+
+df = read.csv("Projet-Mi-session-DataSet.csv", sep = ";", header = TRUE)
+
+```
+
+La première étape est le téléchargement des données, ce qui permet de voir **`r nrow(df)`** observations réparties dans **`r ncol(df)`** colonnes, parmi lesquelles $ValeurAchat$ est la variable d'intérêt. Nous pouvons voir une partie de ces données dans le tableau ci-dessous :\  
+\  
+
+`r kableExtra::kbl(head(df, 5), booktabs = TRUE, label = NA, centering = TRUE, caption = "\\textbf{Tableau 1 : Aperçu des premières lignes}") %>% row_spec(0:length(df), font_size = 7, align = NULL) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = c("hold_position", "scale_down"), position = "center")`\  
+
+De plus, pour s'assurer de l'intégrité de toutes les valeurs des **`r nrow(df)`** observations, une vérification des valeurs manquantes a été faites. Cette opération nous a permis de constater qu'il y avait **`r sum(is.na(df))`** valeur(s) manquante(s) dans notre table de données. Par la suite, nous allons observer un résumé du jeu de données :\  
+\  
+
+```{r summary_1, echo= FALSE, include=FALSE}
+
+summary_1 = df %>%
+  select_all() %>%
+  group_by(Genre) %>%
+  summarize_if(is.numeric, .funs = mean)
+
+summary_2 = df %>%
+  select(-Genre, -AmznPrime, -Fidelite) %>%
+  describe()
+
+```
+
+
+`r kableExtra::kbl(summary_1, booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 2 : Résumé du jeu de données par la moyenne de chaque variable}") %>% row_spec(0:length(summary_1), font_size = 7, align = NULL) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = "hold_position", position = "center")`\  
+ 
+
+`r kableExtra::kbl(summary_2, booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 3 : Résumé des statistiques pour les variables numériques}") %>% row_spec(0:length(summary_2), font_size = 7, align = NULL) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = c("hold_position", "scale_down"), position = "center")`\  
+\  
+\  
+\  
+\  
+\  
+```{r modif_genre, echo= FALSE, include=FALSE}
+
+# On cherche le numéro de la ligne pour laquelle la variable Genre 
+# est égale à "Masculin" et on la remplace par "M"
+
+which(df$Genre == "Masculin")
+df$Genre[381] = "M"
+
+# Mise à jour du résumé
+
+table_cont_new = df %>%
+  select(-AmznPrime, -Fidelite) %>%
+  group_by(Genre) %>%
+  summarize_all(., .funs = mean)
+
+# Pourcentages des variables booléennes
+
+perc_df = df %>%
+  select(AmznPrime, Fidelite) %>%
+  table(dnn = c("AmznPrime", "Fidelite")) %>%
+  prop.table() %>%
+  round(., 4)*100
+
+perc_df = addmargins(perc_df, FUN = sum)
+rownames(perc_df)[3] = "Total"
+colnames(perc_df)[3] = "Total"
+```
+
+Nous remarquons que le premier résumé contient deux lignes, **`r summary_1[1,1]`** et **`r summary_1[2,1]`**, qui correspondent à la même information, soit le genre masculin. Ce "doublon" a pour conséquence d'influencer les statistiques appliquées sur les autres variables. Nous souhaitons les harmoniser par la suite. Voici le nouveau résumé, nous observons que la moyenne est désormais identique dans les deux résumés.\  
+\
+ 
+ `r kableExtra::kable(table_cont_new, booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 4 : Résumé après modification}") %>% row_spec(0:length(table_cont_new), font_size = 7, align = NULL) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = "hold_position")`\  
+ 
+Le second tableau présente différentes statistiques appliquées sur les variables numériques (nous excluons spécifiquement les variables catégorielles $Genre$, $AmznPrime$ et $Fidelite$). À première vue, il est possible de voir que la majorité des variables sont relativement dispersées, comme en témoignent les écarts-types de chacune. 
+De même, un bon nombre présentent une légère asymétrie vers la gauche ou vers la droite lorsqu'on observe la colonne $skew$ du tableau, ainsi qu'une distribution aplatie ($kurtosis$ < 1). Ceci est davantage visible lorsqu'on observe les histogrammes ci-dessous :\  
+ 
+
+```{r graph, echo=FALSE, include=FALSE}
+# On affiche les boxplots de toutes les variables sauf celles booléennes
+
+plots = list()
+
+for(i in names(df[,2:10])){
+plots[[i]] = ggplot(df) +
+  geom_boxplot(aes_string(y = i), position = position_dodge(width = .60), show.legend = "none") +
+          theme_minimal() +
+  theme(axis.title = element_text(size = 10))
+}
+
+plots_1 = list()
+
+for(i in names(df[,2:10])){
+plots_1[[i]] = ggplot(df) +
+    geom_histogram(aes_string(x = i), fill = "#002050", bins = 40L) +
+    theme_minimal() +
+    theme(axis.title = element_text(size = 10))
+}
+
+```
+
+\  
+\  
+```{r boxplots_df, fig.align='center', echo=FALSE, include=TRUE, fig.height=4, fig.width=6}
+# ggarrange(plots[[1]], plots[[2]], plots[[3]], plots[[4]], 
+#           plots[[5]], plots[[6]], plots[[7]], plots[[8]], plots[[9]])
+
+ggarrange(plots_1[[1]], plots_1[[2]], plots_1[[3]], plots_1[[4]], 
+          plots_1[[5]], plots_1[[6]], plots_1[[7]], plots_1[[8]], plots_1[[9]])
+
+```
+\  
+
+Ci-dessous est présenté la matrice de corrélation pour chacune des variables. Le gradient de couleur indique l'intensité de la corrélation. Nous remarquons quelques corrélations modérées entre $Revenu$ et $ValeurAchat$, mais également entre $Fidelite$ et $NbRetours$.\  
+
+```{r correlation, echo=FALSE, include=FALSE, fig.align='center'}
+
+# CORRELATION
+
+df_cor = df
+
+df_cor$AmznPrime = ifelse(df$AmznPrime == "Yes", 1, 0)
+df_cor$Fidelite = ifelse(df$Fidelite == "Yes", 1, 0)
+
+# Création d'une matrice de corrélation
+
+mat_1 <- round(cor(df_cor[,2:12]),2)
+
+# Affichage de la matrice sous forme d'un corrélogramme
+
+# corrplot(mat_1, method = "circle")
+
+df_mat = data.frame(mat_1)
+```
+
+`r kableExtra::kable(df_mat, booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 5 : Matrice de corrélation}") %>% row_spec(0:length(df_mat), font_size = 7, align = NULL, bold = TRUE) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = c("hold_position", "scale_down")) %>% column_spec(2, color = spec_color(df_mat[,1])) %>% column_spec(3, color = spec_color(df_mat[,2])) %>% column_spec(4, color = spec_color(df_mat[,3])) %>% column_spec(5, color = spec_color(df_mat[,4])) %>% column_spec(6, color = spec_color(df_mat[,5])) %>% column_spec(7, color = spec_color(df_mat[,6])) %>% column_spec(8, color = spec_color(df_mat[,7])) %>% column_spec(9, color = spec_color(df_mat[,8])) %>% column_spec(10, color = spec_color(df_mat[,9])) %>% column_spec(11, color = spec_color(df_mat[,10])) %>% column_spec(12, color = spec_color(df_mat[,11]))`\  
+\  
+\  
+\  
+\  
+\  
+
+# Question 2
+
+En résumé, les données présentent des distributions légèrement asymétriques, sauf dans le cas de $ValeurAchat$, qui est asymétrique à droite (skewness > 0). De plus, les variables sont fortement aplaties, ce qui est notamment une conséquence des valeurs d'écarts-types observées élevées. D'autre part, certaines variables sont modérément corrélées entre elles, ce qui montre une influence réciproque.
+
+Ainsi, il semblerait par exemple que si le revenu du client augmente, la valeur de son achat aussi et vice-versa (corrélation positive). De même, l'abonnement au programme de fidélité semble influencer la fréquence à laquelle les clients retournent leurs achats. 
+
+L'abonnement à Amazon Prime semble également influencer la valeur de l'achat, tout comme le montant payé pour du carburant. Toutefois, l'interaction entre ces deux dernières est plus faible. En revanche, nous observons que la plupart des variables ont une influence très faible sur l'investissement en Bitcoin, puisque les coefficients de corrélation sont proches de zéro.\  
+
+# Question 3
+
+
+Voici les pourcentages des clients possédant ou non un abonnement à Amazon Prime, ainsi qu'une carte de fidélité, ainsi que les diagrammes en boites des différentes variables numériques :\  
+\  
+
+`r kableExtra::kable(perc_df, booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 6 : Tableau croisé des pourcentages de clients adhérant aux abonnements ou non}") %>% add_header_above(c("AmznPrime" = 1, "Fidelite" = 2)) %>% row_spec(0:length(perc_df), font_size = 7, align = NULL) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = "hold_position")`\  
+
+Les résultats montrent qu'une plus grande proportion de clients adhèrent au programme de fidélité, soit **`r perc_df[3,2]`%**, indépendamment de leur adhésion à Amazon Prime. D'autre part, peu de clients ne sont uniquement abonnés à ce dernier (soit **`r perc_df[2,1]`%**).\  
+
+`r kableExtra::kable(df_mat[c(10,11),c(10,11)], booktabs = TRUE, label = NA, caption = "\\textbf{Tableau 7 : Influence des variables AmznPrime et Fidelite}") %>% row_spec(0:length(df_mat[c(10,11),c(10,11)]), font_size = 7, align = NULL, bold = TRUE) %>% row_spec(0, angle = 0, bold = TRUE) %>% kable_styling(latex_options = c("hold_position")) %>% column_spec(2, color = spec_color(df_mat[10:11,10])) %>% column_spec(3, color = spec_color(df_mat[10:11,11]))`\  
+
+Si nous reprenons la matrice de corrélation pour les variables $AmznPrime$ et $Fidelite$ uniquement, celle-ci nous indique que la corrélation entre les variables est de **`r round(cor(df_cor$AmznPrime, df_cor$Fidelite),3)`**, ce qui correspond à une interaction négative très faible. Les deux variables sont pratiquement indépendantes l'une de l'autre, ce qui ce confirme avec le test de corrélation de Pearson, pour lequel $H_0$ est l'hypothèse sous laquelle les coefficients de corrélation sont égaux à zéro et $H_1$ l'hypothèse alternative sous laquelle les coefficients sont différents de zéro :\  
+
+```{r test_pearson, comment=NA, echo=FALSE, include=TRUE}
+
+# Test de Pearson
+
+test1 = cor.test(df_cor$AmznPrime,
+               df_cor$Fidelite)
+test1
+```
+
+
+  
+Les résultats du test indiquent une $p-value$ de *$`r test1$p.value` > 0.05$*, nous rejettons donc $H_0$. Les coefficients sont différents de zéro, toutefois, la corrélation demeure faible.\  
+
+# Question 4
+
+
+```{r message=FALSE, results='hide', comment=NA, warning=FALSE, echo=FALSE, include = TRUE, fig.align='center'}
+
+# GRAPHIQUE A BARRES EMPILEES
+
+ggplot(df) +
+  geom_bar(aes(as.factor(NbRetours), fill = as.factor(Fidelite)), position = "fill") +
+  scale_fill_viridis(discrete = TRUE, labels = c("Non", "Oui"), option = "E") +
+  scale_y_continuous("Pourcentage", labels = scales::percent) +
+  theme_minimal() +
+  ggtitle("Fréquence relative du nombre de retours selon la fidélité") +
+  theme(plot.title = element_text(family = 'Helvetica', face = 'bold',
+                                  hjust = 0.5, size = 10),
+        axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8),
+        legend.position = "right") +
+  labs(x = "Nombre de retours", fill = "Fidélité")
+```
+\  
+Il semblerait que les retours soient plus fréquents lorsque le client n'est pas abonné au programme de fidélité de l'entreprise. Par exemple, près de 75% des clients ayant effectué 5 retours étaient abonnés au programme de fidélité de l'entreprise. Au-delà de 5, tous les clients y sont abonnés.\  
+
+# Question 5
+
+
+```{r confid_interval, results = 'hide', echo=FALSE, include=FALSE}
+
+# INTERVALLE DE CONFIANCE
+
+prop.test(table(df$Fidelite), conf.level = 0.95)$"conf.int"
+
+# Inversion de la table de proportions
+
+table_inv = df$Fidelite %>%
+  factor(., levels = c("Yes", "No")) %>%
+  table()
+
+prop_test_int = prop.test(table_inv, alternative = "two.sided", conf.level = 0.95)$"conf.int"
+```
+
+Ici, l'intervalle de confiance à 95% pour la proportion $\pi$ des clients ayant l’adhésion au programme de fidélité est de *$\left[`r round(prop_test_int[1],3)` ; `r round(prop_test_int[2],3)`\right]$*. Nous l'obtenons suite à l'inversion de la table de proportions.
+
+# Question 6
+
+Nous souhaitons comparer la moyenne des valeurs d’achat des clients qui ont l’adhésion au programme « fidélité » avec celle des clients qui n’ont pas cette adhésion. Soit :
+\begin{itemize}
+\item $H_0$ l'hypothèse sous laquelle les moyennes des deux groupes ne sont pas significativement différentes.
+\item $H_1$ l'hypothèse sous laquelle les moyennes des deux groupes sont significativement différentes.\ 
+\end{itemize}
+
+```{r t_test, echo=FALSE, include=TRUE, comment=NA}
+
+# T-TEST
+
+welch_test = t.test(df$ValeurAchat[df$Fidelite == "Yes"],
+       df$ValeurAchat[df$Fidelite == "No"],
+       alternative='two.sided',
+       conf.level = 0.95)
+welch_test
+
+```
+
+\   
+Le test renvoie une $p-value$ de *$`r welch_test$p.value` < 0.05$* à l'intervalle de confiance de 95%. Nous acceptons donc l'hypothèse $H_0$.
+
+# Question 7
+
+
+### a. Modèle de régression linéaire
+
+Il s'agit ici de construire un modèle de régression linéaire multiple, avec $ValeurAchat$ étant la variable dépendante. Nous décidons d'omettre la variable $Genre$ car celle-ci n'est composée du genre masculin uniquement et n'aura pas d'effet sur la performance du modèle.\  
+
+
+### b. Discussion des résultats
+
+```{r reg_mod_1, echo=FALSE, include=TRUE, comment=NA}
+# Transformation des variables catégorielles
+
+df_reg = df
+
+df_reg$AmznPrime = ifelse(df_reg$AmznPrime == "Yes", 1, 0)
+df_reg$Fidelite = ifelse(df_reg$Fidelite == "Yes", 1, 0)
+
+# MODÈlE ENTIER
+
+reg_model = lm(ValeurAchat ~ ., data = subset(df_reg, select = -Genre))
+summary(reg_model)
+
+```
+\  
+
+Nous remarquons que seules les variables $Revenu$, $InvestBitcoin$, $Carburant$, $Hypotheque$, $AchatPrecedent$, ainsi que les abonnements au programme de fidélité et au service Amazon Prime semblent être significatifs, puisque leur $p-value$ est inférieure au seuil de confiance de 0.05. D'autre part, la $p-value$ de *$`r pf(summary(reg_model)$fstatistic[1], summary(reg_model)$fstatistic[2], summary(reg_model)$fstatistic[3], lower.tail = FALSE)` < 2.2e^{-16} < 0.05$* et le $R^2$ ajusté est de **`r summary(reg_model)$adj.r.squared`**. Le modèle semble pertinent mais les prédicteurs n'expliquent qu'à 70% la valeur du prochain achat.\  
+
+
+### c. Diagnostic du modèle
+
+```{r plot_regmod, echo=FALSE, include=TRUE, fig.align='center'}
+
+# PLOTS DU MODÈLE
+
+par(mfrow = c(2,2))
+plot(reg_model)
+
+```
+\  
+Les graphiques ci-dessus nous montrent que l'homoscédasticité est violée : en effet, le nuage de points sur le graphique des résidus en foncttions des valeurs ajustées n'est pas uniforme et prend la forme d'un entonnoir. Cela montre que les variances des résidus ne sont pas constantes. En revanche, la normalité des résidus est relativement respectée. Enfin, les valeurs 149 et 316 semblent être aberrantes.\  
+
+
+# Question 8
+
+### a. Modèle de régression linéaire
+
+Il s'agit ici de construire un modèle de régression linéaire multiple, avec $InvestBitcoin$ étant la variable dépendante. Nous décidons d'omettre la variable $Genre$ car celle-ci n'est composée du genre masculin uniquement et n'aura pas d'effet sur la performance du modèle.\  
+
+
+### b. Discussion des résultats
+
+```{r reg_mod_2, echo=FALSE, include=TRUE, comment=NA}
+
+# MODELE 
+
+reg_model_btc = lm(InvestBitcoin ~ ., data = subset(df_reg, select = -Genre))
+summary(reg_model_btc)
+```
+\ 
+\  
+Nous remarquons que seules les variables $Revenu$, $Carburant$, $Hypotheque$, $AchatPrecedent$, $ValeurAchat$, ainsi que l'abonnement au service Amazon Prime semblent être significatifs, puisque leur $p-value$ est inférieure ou proche du seuil de confiance de 0.05. D'autre part, la $p-value$ de *$`r pf(summary(reg_model_btc)$fstatistic[1], summary(reg_model_btc)$fstatistic[2], summary(reg_model_btc)$fstatistic[3], lower.tail = FALSE)` < 2.2e^{-16} < 0.05$* et le $R^2$ ajusté est de **`r summary(reg_model_btc)$adj.r.squared`**. Le modèle semble pertinent, mais performe mal ; les prédicteurs n'expliquent qu'à 27% l'investissement des clients en Bitcoin.\ 
+\
+
+### c. Diagnostic du modèle
+\  
+```{r reg_mod_2_plots, echo=FALSE, include=TRUE, fig.align='center'}
+# PLOTS
+
+par(mfrow = c(2,2))
+plot(reg_model_btc)
+```
+\ 
+\  
+Les graphiques ci-dessus nous montrent que la normalité des résidus est respectée, cependant, l'homoscédasticité est violée : le nuage de points sur le graphique des résidus en fonction des valeurs ajustées n'est pas uniforme et courbe. Cela montre que les variances des résidus ne sont pas constantes. Enfin, les valeurs 22, 44, 149 et 316 semblent aberrantes, ce qui affecte la qualité du modèle.\  
+
+# Annexe
+
+\  
+\  
+```{r echo=TRUE, results='hide', eval=FALSE, include=TRUE}
+
+# INSTALLATION DE PACKAGES COMPLEMENTAIRES
+
+packages<-function(x){
+  x<-as.character(match.call()[[2]])
+  if (!require(x,character.only=TRUE)){
+    install.packages(pkgs=x,repos="http://cran.r-project.org")
+    require(x,character.only=TRUE)
+  }
+}
+packages(kableExtra)
+packages(leaps)
+packages(ggplot2)
+packages(tidyverse)
+packages(rmarkdown)
+packages(viridis)
+packages(corrplot)
+packages(egg)
+packages(psych)
+
+# kableExtra est un outil permettant de gérer l'affichage des tableaux dans le rapport
+# corrplot est un outil permettant de facilement visualiser les matrices de corrélation
+# viridis est un outil de gestion des couleurs dans les visules de type ggplot
+# la fonction ggarrange() d'egg est un outil permettant de combiner plusieurs objets de type ggplot
+# psych est un outil offrant davantage d'outils statistiques
+
+# QUESTION 1
+
+df = read.csv("Projet-Mi-session-DataSet.csv", sep = ";", header = TRUE)
+
+summary_1 = df %>%
+  select_all() %>%
+  group_by(Genre) %>%
+  summarize_if(is.numeric, .funs = mean)
+
+summary_2 = df %>%
+  select(-Genre, -AmznPrime, -Fidelite) %>%
+  describe()
+
+# On cherche le numéro de la ligne pour laquelle la variable Genre 
+# est égale à "Masculin" et on la remplace par "M"
+
+which(df$Genre == "Masculin")
+df$Genre[381] = "M"
+
+# Mise à jour du résumé
+
+table_cont_new = df %>%
+  select(-AmznPrime, -Fidelite) %>%
+  group_by(Genre) %>%
+  summarize_all(., .funs = mean)
+
+# Pourcentages des variables booléennes
+
+perc_df = df %>%
+  select(AmznPrime, Fidelite) %>%
+  table(dnn = c("AmznPrime", "Fidelite")) %>%
+  prop.table() %>%
+  round(., 4)*100
+
+perc_df = addmargins(perc_df, FUN = sum)
+rownames(perc_df)[3] = "Total"
+colnames(perc_df)[3] = "Total"
+
+# On affiche les distributions de toutes les variables sauf celles booléennes
+
+# Boxplots
+
+plots = list()
+
+for(i in names(df[,2:10])){
+plots[[i]] = ggplot(df) +
+  geom_boxplot(aes_string(y = i), position = position_dodge(width = .60), show.legend = "none") +
+          theme_minimal() +
+  theme(axis.title = element_text(size = 10))
+}
+
+# Distributions
+
+plots_1 = list()
+
+for(i in names(df[,2:10])){
+plots_1[[i]] = ggplot(df) +
+  geom_density(aes_string(x = i)) +
+          theme_minimal() +
+  theme(axis.title = element_text(size = 10))
+}
+
+# ggarrange(plots[[1]], plots[[2]], plots[[3]], plots[[4]], plots[[5]], 
+#           plots[[6]], plots[[7]], plots[[8]], plots[[9]])
+
+ggarrange(plots_1[[1]], plots_1[[2]], plots_1[[3]], plots_1[[4]], plots_1[[5]], 
+          plots_1[[6]], plots_1[[7]], plots_1[[8]], plots_1[[9]])
+
+# Corrélation
+
+df_cor = df
+
+df_cor$AmznPrime = ifelse(df$AmznPrime == "Yes", 1, 0)
+df_cor$Fidelite = ifelse(df$Fidelite == "Yes", 1, 0)
+
+# Création d'une matrice de corrélation
+
+mat_1 <- round(cor(df_cor[,2:12]),2)
+
+# Affichage de la matrice sous forme d'un corrélogramme
+
+# corrplot(mat_1, method = "circle")
+
+df_mat = data.frame(mat_1)
+
+# QUESTION 3
+
+# Test de Pearson
+
+test1 = cor.test(df_cor$AmznPrime,
+               df_cor$Fidelite)
+test1
+
+# QUESTION 4
+
+# Graphique à barres empilées égales
+
+ggplot(df) +
+  geom_bar(aes(as.factor(NbRetours), fill = as.factor(Fidelite)), position = "fill") +
+  scale_fill_viridis(discrete = TRUE, labels = c("Oui", "Non"), option = "E") +
+  scale_y_continuous("Pourcentage", labels = scales::percent) +
+  theme_minimal() +
+  ggtitle("Fréquence relative du nombre de retours selon la fidélité") +
+  theme(plot.title = element_text(family = 'Helvetica', face = 'bold',
+                                  hjust = 0.5, size = 10),
+        axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8),
+        legend.position = "right") +
+  labs(x = "Nombre de retours", fill = "Fidélité")
+
+# QUESTION 5
+
+# Intervalle de confiance
+
+prop.test(table(df$Fidelite), conf.level = 0.95)$"conf.int"
+
+# Inversion de la table de proportions
+
+table_inv = df$Fidelite %>%
+  factor(., levels = c("Yes", "No")) %>%
+  table()
+
+prop_test_int = prop.test(table_inv, alternative = "two.sided", conf.level = 0.95)$"conf.int"
+
+# QUESTION 6
+
+# T.test
+
+welch_test = t.test(df$ValeurAchat[df$Fidelite == "Yes"],
+       df$ValeurAchat[df$Fidelite == "No"],
+       alternative='two.sided',
+       conf.level = 0.95)
+welch_test
+
+# QUESTION 7
+
+# Transformation des variables catégorielles
+
+df_reg = df
+
+df_reg$AmznPrime = ifelse(df_reg$AmznPrime == "Yes", 1, 0)
+df_reg$Fidelite = ifelse(df_reg$Fidelite == "Yes", 1, 0)
+
+# Modèle entier
+
+reg_model = lm(ValeurAchat ~ ., data = subset(df_reg, select = -Genre))
+summary(reg_model)
+
+# Plots
+
+par(mfrow = c(2,2))
+plot(reg_model)
+
+# QUESTION 8
+
+# Modèle entier
+
+reg_model_btc = lm(InvestBitcoin ~ ., data = subset(df_reg, select = -Genre))
+summary(reg_model_btc)
+
+# Plots
+
+par(mfrow = c(2,2))
+plot(reg_model_btc)
+
+```
+
